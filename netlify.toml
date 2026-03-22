@@ -5,7 +5,7 @@
     Access-Control-Allow-Headers = "*"
     Access-Control-Allow-Methods = "*"
 [[redirects]]
-  from = "/*"
-  to = "https://www.calibur.cn/:splat"
-  status = 200
-  force = true
+    from = "/*"
+    to = "https://www.calibur.cn/:splat"
+    status = 200
+    force = true
