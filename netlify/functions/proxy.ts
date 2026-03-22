@@ -1,71 +1,65 @@
+// netlify/functions/proxy.js
+const TARGET_URL = "https://www.calibur.cn";
+
+// Netlify Functions 的主处理函数
 export default async (req, context) => {
-  const url = new URL(req.url);
-  
-  // 1. 域名重定向逻辑
-  if (url.host === 'ixipi.net') {
-    return Response.redirect("https://www.ixipi.net", 301);
-  }
-  if (url.host === 'danmu.me') {
-    return Response.redirect("https://www.danmu.me", 301);
-  }
-
-  const targetBase = "http://114.67.203.179:4000";
-  const targetUrl = targetBase + url.pathname + url.search;
-
-  // 判定内容类型
-  let contentType = url.pathname.includes('.js') 
-    ? 'application/javascript; charset=utf-8' 
-    : url.pathname.includes('.css') 
-      ? 'text/css' 
-      : 'text/html';
-
-  // 2. 静态资源与特定路径逻辑 (使用 Streaming 转发)
-  if (['/', '/sponsor', '/login', '/register'].includes(url.pathname)
-    || /^\/(uu|pub|assets|play)\//.test(url.pathname)) {
+  try {
+    // 1. 解析原始请求的路径和查询参数
+    // 提取路径（去掉 /.netlify/functions/proxy 前缀）
+    const pathname = req.url.replace(/^\/\.netlify\/functions\/proxy/, "") || "/";
+    // 提取查询参数
+    const searchParams = new URL(req.url, `http://${req.headers.host}`).search;
+    const targetPath = pathname + searchParams;
+    console.log("转发路径:", targetPath);
     
-    const resp = await fetch(targetUrl, {
+    const fullTargetUrl = new URL(targetPath, TARGET_URL);
+
+    // 2. 构建转发请求头（过滤掉 Netlify 内部头，避免冲突）
+    const forwardHeaders = {};
+    Object.entries(req.headers).forEach(([key, value]) => {
+      // 排除 Netlify 特定头和 hop-by-hop 头
+      if (!["host", "connection", "x-nf-request-id"].includes(key.toLowerCase())) {
+        forwardHeaders[key] = value;
+      }
+    });
+
+    // 3. 构建转发请求
+    const proxyReqOptions = {
       method: req.method,
-      headers: {
-        "Content-Type": contentType,
-        "Token": req.headers.get('Token') || '',
-        "Origin": req.headers.get('Origin') || '',
-      },
-      body: req.body
+      headers: forwardHeaders,
+      body: req.method !== "GET" && req.method !== "HEAD" ? req.body : null,
+      redirect: "follow",
+    };
+
+    // 4. 转发请求到目标服务器
+    const response = await fetch(fullTargetUrl.toString(), proxyReqOptions);
+
+    // 5. 构建响应（处理跨域和响应头）
+    const responseHeaders = new Headers(response.headers);
+    // 解决跨域问题
+    responseHeaders.set("Access-Control-Allow-Origin", "*");
+    responseHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    responseHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    // 6. 返回最终响应
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
     });
 
-    return new Response(resp.body, {
-      headers: {
-        "Content-Type": contentType,
-        "Access-Control-Allow-Headers": "*",
-        "Access-Control-Allow-Origin": "*"
-      },
-    });
-  } 
-  
-  // 3. 其他请求逻辑 (获取文本后再返回)
-  else {
-    const res = await fetch(targetUrl, {
-      method: req.method,
-      headers: {
-        "Content-Type": req.headers.get('Content-Type') || '',
-        "Token": req.headers.get('Token') || '',
-        "Origin": req.headers.get('Origin') || '',
-      },
-      body: req.body
-    });
-
-    const ret = await res.text();
-    console.log(ret);
-
-    return new Response(ret, {
-      headers: {
-        "Content-Type": res.headers.get('Content-Type') || 'text/plain',
-        "Access-Control-Allow-Headers": "*",
-        "Access-Control-Allow-Origin": "*"
-      },
+  } catch (error) {
+    // 错误处理：返回 500 响应
+    console.error("代理请求失败:", error);
+    return new Response(`代理请求失败: ${error.message}`, {
+      status: 500,
+      headers: { "Content-Type": "text/plain" },
     });
   }
 };
 
-// 配置路由：匹配所有路径
-export const config = { path: "/*" };
+// 处理 OPTIONS 预检请求（跨域必备）
+export const config = {
+  path: "/*", // 匹配所有路径
+  method: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // 支持的请求方法
+};
